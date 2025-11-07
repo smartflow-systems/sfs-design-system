@@ -1,0 +1,29 @@
+{
+  "name": "@smartflow/design-system",
+  "version": "1.0.0",
+  "description": "SmartFlow Systems unified design system with dark brown/black theme and metallic gold accents",
+  "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "files": [
+    "src",
+    "tailwind.config.js",
+    "README.md"
+  ],
+  "keywords": [
+    "design-system",
+    "smartflow",
+    "tailwind",
+    "react",
+    "ui-components"
+  ],
+  "author": "SmartFlow Systems",
+  "license": "MIT",
+  "peerDependencies": {
+    "tailwindcss": ">=3.0.0"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.0",
+    "tailwindcss-animate": "^1.0.7",
+    "@tailwindcss/typography": "^0.5.10"
+  }
+}
