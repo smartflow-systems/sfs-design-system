@@ -1,6 +1,8 @@
-# SmartFlow Systems Design System
+# SmartFlow Design System
 
-A unified design system for all SmartFlow Systems applications featuring a dark brown/black theme with luxurious metallic gold accents.
+**Unified design system for all SmartFlow Systems applications**
+
+Create a consistent, premium brand experience across all SFS applications with our glassmorphism-based design system featuring dark themes, metallic gold accents, and animated circuit backgrounds.
 
 ## Theme Overview
 
