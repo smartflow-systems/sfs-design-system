@@ -1,15 +1,50 @@
 import express from "express";
+import helmet from "helmet";
+import cors from "cors";
+import rateLimit from "express-rate-limit";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
 
 const app = express();
 
-// Middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Security headers
+app.use(helmet());
+
+// CORS — restrict to same origin in production; override via CORS_ORIGIN env var
+const allowedOrigin = process.env.CORS_ORIGIN || false;
+app.use(cors({
+  origin: allowedOrigin,
+  credentials: false,
+}));
+
+// Body parsing
+app.use(express.json({ limit: "16kb" }));
+app.use(express.urlencoded({ extended: true, limit: "16kb" }));
+
+// Rate limiting — global
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use(globalLimiter);
+
+// Stricter limit on mutation endpoints
+const writeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // Load config once at startup
-const config = JSON.parse(readFileSync("./public/site.config.json", "utf-8"));
+let config;
+try {
+  config = JSON.parse(readFileSync("./public/site.config.json", "utf-8"));
+} catch {
+  config = { siteName: "SFS Design System", version: "0.1.0" };
+}
 
 // Ensure data directory exists
 const dataDir = "./data";
@@ -30,8 +65,7 @@ function readLeads() {
   try {
     const data = readFileSync(leadsFile, "utf-8");
     return JSON.parse(data);
-  } catch (error) {
-    console.error("Error reading leads:", error);
+  } catch {
     return { leads: [] };
   }
 }
@@ -41,8 +75,7 @@ function writeLeads(data) {
   try {
     writeFileSync(leadsFile, JSON.stringify(data, null, 2));
     return true;
-  } catch (error) {
-    console.error("Error writing leads:", error);
+  } catch {
     return false;
   }
 }
@@ -54,16 +87,16 @@ app.use(express.static("public"));
 app.get("/health", (_req, res) => res.json({
   ok: true,
   siteName: config.siteName,
-  version: config.version
+  version: config.version,
 }));
 app.get("/api/health", (_req, res) => res.json({
   ok: true,
   siteName: config.siteName,
-  version: config.version
+  version: config.version,
 }));
 
 // API: Submit Lead
-app.post("/api/leads", (req, res) => {
+app.post("/api/leads", writeLimiter, (req, res) => {
   try {
     const { firstName, lastName, email, company, phone, source } = req.body;
 
@@ -71,16 +104,27 @@ app.post("/api/leads", (req, res) => {
     if (!firstName || !lastName || !email) {
       return res.status(400).json({
         success: false,
-        message: "First name, last name, and email are required"
+        message: "First name, last name, and email are required",
       });
     }
 
+    // Sanitize string inputs — strip to reasonable length
+    const clean = (val, max = 200) =>
+      typeof val === "string" ? val.trim().slice(0, max) : "";
+
+    const safeFirst = clean(firstName, 100);
+    const safeLast = clean(lastName, 100);
+    const safeEmail = clean(email, 254);
+    const safeCompany = clean(company);
+    const safePhone = clean(phone, 20);
+    const safeSource = clean(source, 50) || "direct";
+
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
+    if (!emailRegex.test(safeEmail)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid email format"
+        message: "Invalid email format",
       });
     }
 
@@ -88,27 +132,27 @@ app.post("/api/leads", (req, res) => {
     const data = readLeads();
 
     // Check for duplicate email
-    const existingLead = data.leads.find(lead => lead.email === email);
+    const existingLead = data.leads.find(lead => lead.email === safeEmail);
     if (existingLead) {
       return res.status(200).json({
         success: true,
         message: "Lead already exists",
-        leadId: existingLead.id
+        leadId: existingLead.id,
       });
     }
 
     // Create new lead
     const newLead = {
       id: `lead_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      firstName,
-      lastName,
-      email,
-      company: company || "",
-      phone: phone || "",
-      source: source || "direct",
+      firstName: safeFirst,
+      lastName: safeLast,
+      email: safeEmail,
+      company: safeCompany,
+      phone: safePhone,
+      source: safeSource,
       status: "new",
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
     };
 
     // Add lead to array
@@ -119,88 +163,104 @@ app.post("/api/leads", (req, res) => {
       throw new Error("Failed to save lead");
     }
 
-    console.log(`✓ New lead captured: ${email}`);
-
     // Return success
     res.status(201).json({
       success: true,
       message: "Lead captured successfully",
-      leadId: newLead.id
+      leadId: newLead.id,
     });
 
-  } catch (error) {
-    console.error("Lead submission error:", error);
+  } catch {
     res.status(500).json({
       success: false,
-      message: "Internal server error"
+      message: "Internal server error",
     });
   }
 });
 
-// API: Get All Leads (admin only - no auth for now, add later)
-app.get("/api/leads", (_req, res) => {
+// API: Get All Leads — requires API key via Authorization header
+app.get("/api/leads", (req, res) => {
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (!adminKey) {
+    return res.status(503).json({ success: false, message: "Admin access not configured" });
+  }
+  const authHeader = req.headers.authorization || "";
+  if (authHeader !== `Bearer ${adminKey}`) {
+    return res.status(401).json({ success: false, message: "Unauthorized" });
+  }
   try {
     const data = readLeads();
     res.json({
       success: true,
       count: data.leads.length,
-      leads: data.leads
+      leads: data.leads,
     });
-  } catch (error) {
-    console.error("Error fetching leads:", error);
+  } catch {
     res.status(500).json({
       success: false,
-      message: "Failed to fetch leads"
+      message: "Failed to fetch leads",
     });
   }
 });
 
 // API: Stripe Checkout (placeholder - requires Stripe configuration)
-app.post("/api/stripe/checkout", async (req, res) => {
+const ALLOWED_PLAN_IDS = /^[a-zA-Z0-9_-]{1,50}$/;
+
+app.post("/api/stripe/checkout", writeLimiter, async (req, res) => {
   try {
     const { planId, successUrl, cancelUrl } = req.body;
 
+    // Validate planId format before using it in any lookup
+    if (!planId || typeof planId !== "string" || !ALLOWED_PLAN_IDS.test(planId)) {
+      return res.status(400).json({ success: false, message: "Invalid plan ID" });
+    }
+
     // Load pricing data
-    const pricingData = JSON.parse(readFileSync("./public/pricing.json", "utf-8"));
+    let pricingData;
+    try {
+      pricingData = JSON.parse(readFileSync("./public/pricing.json", "utf-8"));
+    } catch {
+      return res.status(503).json({ success: false, message: "Pricing data unavailable" });
+    }
+
     const plan = pricingData.plans.find(p => p.id === planId);
 
     if (!plan) {
       return res.status(404).json({
         success: false,
-        message: "Plan not found"
+        message: "Plan not found",
       });
     }
 
-    // TODO: Implement Stripe checkout session
-    // For now, return a placeholder response
-    // You'll need to:
-    // 1. Install stripe package: npm install stripe
-    // 2. Add STRIPE_SECRET_KEY to .env
-    // 3. Create Stripe checkout session
-
-    console.log(`Checkout requested for plan: ${planId}`);
-
-    // Placeholder response
+    // Placeholder response until Stripe is wired up
     res.json({
       success: true,
       message: "Stripe integration pending",
       planId,
       plan: plan.name,
       price: plan.price,
-      // In production, return: url: session.url
-      url: `/contact.html?plan=${planId}` // Temporary redirect to contact
+      url: `/contact.html?plan=${encodeURIComponent(planId)}`,
     });
 
-  } catch (error) {
-    console.error("Checkout error:", error);
+  } catch {
     res.status(500).json({
       success: false,
-      message: "Failed to create checkout session"
+      message: "Failed to create checkout session",
     });
   }
 });
 
+// Global error handler — prevents Express from leaking stack traces
+app.use((err, _req, res, _next) => {
+  res.status(500).json({ success: false, message: "Internal server error" });
+});
+
 // port
 const port = process.env.PORT || 5000;
-app.listen(port, () => console.log(`serving on ${port}`));
+app.listen(port, () => {
+  if (process.env.NODE_ENV !== "production") {
+    process.stdout.write(`serving on ${port}\n`);
+  }
+});
+
 export default app;

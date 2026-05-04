@@ -34,3 +34,8 @@ docs
 .github
 .gitlab-ci.yml
 .travis.yml
+
+# Secrets — never bake these into the image
+.env
+.env.*
+data/

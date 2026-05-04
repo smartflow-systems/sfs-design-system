@@ -206,9 +206,6 @@ function initSFSSidebar() {
 
   if (sidebar) {
     window.sfsSidebar = new SFSSidebar(sidebar);
-    console.log('✅ SFS Sidebar initialized');
-  } else {
-    console.warn('⚠️ SFS Sidebar element not found. Add an element with class "sfs-sidebar" to use this component.');
   }
 }
 

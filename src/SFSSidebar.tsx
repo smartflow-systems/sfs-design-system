@@ -139,7 +139,8 @@ export const SFSSidebar: React.FC<SFSSidebarProps> = ({
 
   const renderIcon = (icon: string | React.ReactNode) => {
     if (typeof icon === 'string') {
-      return <span dangerouslySetInnerHTML={{ __html: icon }} />;
+      // Use textContent to avoid XSS — icon strings are treated as plain text/emoji
+      return <span>{icon}</span>;
     }
     return icon;
   };
