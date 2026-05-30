@@ -4,7 +4,6 @@ import cors from "cors";
 import rateLimit from "express-rate-limit";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
-import rateLimit from "express-rate-limit";
 
 const app = express();
 
